@@ -1,0 +1,53 @@
+name: Build chunba AI Photo Classifier v2.0 R1
+on:
+  workflow_dispatch:
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Download YuNet
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx" -OutFile "face_detection_yunet_2023mar.onnx"
+      - name: Download ArcFace
+        shell: powershell
+        run: |
+          try {
+            Invoke-WebRequest -Uri "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" -OutFile "buffalo_l.zip"
+          }
+          catch {
+            Invoke-WebRequest -Uri "https://sourceforge.net/projects/insightface.mirror/files/v0.7/buffalo_l.zip/download" -OutFile "buffalo_l.zip"
+          }
+          Expand-Archive -Path "buffalo_l.zip" -DestinationPath "buffalo_tmp" -Force
+          $arc = Get-ChildItem -Path "buffalo_tmp" -Recurse -Filter "w600k_r50.onnx" | Select-Object -First 1
+          if (-not $arc) { throw "w600k_r50.onnx not found" }
+          Copy-Item $arc.FullName ".\w600k_r50.onnx"
+      - name: Prepare YOLOv8n ONNX
+        shell: powershell
+        run: |
+          pip install ultralytics onnx
+          python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=False)"
+          if (-not (Test-Path ".\yolov8n.onnx")) { throw "YOLOv8n ONNX export failed" }
+      - name: Build EXE
+        shell: powershell
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name "chunba_ai_photo_classifier_v2_0_r1" --collect-all pillow_heif --add-data "face_detection_yunet_2023mar.onnx;." --add-data "w600k_r50.onnx;." --add-data "yolov8n.onnx;." chunba_ai_photo_classifier_v2_0_r1.py
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunba-ai-photo-classifier-v2-0-r1-windows
+          path: dist/chunba_ai_photo_classifier_v2_0_r1.exe
+          if-no-files-found: error
+          retention-days: 30
